@@ -2,11 +2,11 @@
 const express = require("express");
 const multer = require("multer");
 const path = require("path");
-const fs = require("fs");
 const crypto = require("crypto");
 
 const Certificate = require("../models/Certificate");
 const authMiddleware = require("../middleware/authMiddleware");
+const cloudinary = require("../config/cloudinary");
 
 const router = express.Router();
 
@@ -16,19 +16,9 @@ const allowedMimeTypes = {
   "image/png": [".png"],
 };
 
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, "uploads/");
-  },
-
-  filename: function (req, file, cb) {
-    const extension = path.extname(file.originalname).toLowerCase();
-    cb(null, crypto.randomUUID() + extension);
-  },
-});
-
+// Store uploaded files temporarily in memory
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   limits: {
     fileSize: 5 * 1024 * 1024,
     files: 1,
@@ -48,6 +38,25 @@ const upload = multer({
     cb(null, true);
   },
 });
+
+// Upload a validated file buffer to Cloudinary
+const uploadToCloudinary = (buffer, publicId) => {
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      {
+        resource_type: "raw",
+        type: "authenticated",
+        public_id: publicId,
+      },
+      (error, result) => {
+        if (error) return reject(error);
+        resolve(result);
+      }
+    );
+
+    stream.end(buffer);
+  });
+};
 
 // GET certificates belonging to the logged-in user
 router.get("/", authMiddleware, async (req, res) => {
@@ -91,12 +100,12 @@ router.post(
     });
   },
   async (req, res) => {
+    let uploadedPublicId;
+
     try {
       const { certificateName, issuingOrganization } = req.body;
 
       if (!certificateName || !issuingOrganization) {
-        if (req.file) await fs.promises.unlink(req.file.path);
-
         return res.status(400).json({
           message: "Certificate name and issuing organization are required.",
         });
@@ -108,30 +117,41 @@ router.post(
         });
       }
 
-      // Inspect the actual file contents
-      const { fileTypeFromFile } = await import("file-type");
-      const detectedType = await fileTypeFromFile(req.file.path);
+      // Validate the actual file contents
+      const { fileTypeFromBuffer } = await import("file-type");
+      const detectedType = await fileTypeFromBuffer(req.file.buffer);
 
       const extension = path.extname(req.file.originalname).toLowerCase();
 
       const isValid =
         detectedType &&
         allowedMimeTypes[detectedType.mime] &&
-        allowedMimeTypes[detectedType.mime].includes(extension);
+        allowedMimeTypes[detectedType.mime].includes(extension) &&
+        detectedType.mime === req.file.mimetype;
 
       if (!isValid) {
-        await fs.promises.unlink(req.file.path);
-
         return res.status(400).json({
           message: "File contents do not match an allowed certificate format.",
         });
       }
 
+      const publicId =
+        `certificates/${crypto.randomUUID()}${extension}`;
+
+      // Upload as a private authenticated raw asset
+      const cloudinaryResult = await uploadToCloudinary(
+        req.file.buffer,
+        publicId
+      );
+
+      uploadedPublicId = cloudinaryResult.public_id;
+
       const certificate = new Certificate({
         certificateName,
         issuingOrganization,
         fileName: req.file.originalname,
-        filePath: req.file.path,
+        cloudinaryPublicId: cloudinaryResult.public_id,
+        cloudinaryResourceType: "raw",
         owner: req.userId,
       });
 
@@ -141,8 +161,16 @@ router.post(
     } catch (error) {
       console.error("Certificate upload error:", error);
 
-      if (req.file && fs.existsSync(req.file.path)) {
-        await fs.promises.unlink(req.file.path);
+      // Remove the Cloudinary file if saving its database record fails
+      if (uploadedPublicId) {
+        try {
+          await cloudinary.uploader.destroy(uploadedPublicId, {
+            resource_type: "raw",
+            type: "authenticated",
+          });
+        } catch (cleanupError) {
+          console.error("Cloudinary cleanup error:", cleanupError);
+        }
       }
 
       res.status(500).json({
@@ -166,22 +194,46 @@ router.get("/:id/download", authMiddleware, async (req, res) => {
       });
     }
 
-    const filePath = path.resolve(certificate.filePath);
-    const uploadsDirectory = path.resolve("uploads");
+    // Support older certificates stored on the local server
+    if (certificate.filePath) {
+      const fs = require("fs");
+      const filePath = path.resolve(certificate.filePath);
+      const uploadsDirectory = path.resolve("uploads");
 
-    if (!filePath.startsWith(uploadsDirectory + path.sep)) {
-      return res.status(403).json({
-        message: "Access denied",
-      });
+      if (!filePath.startsWith(uploadsDirectory + path.sep)) {
+        return res.status(403).json({
+          message: "Access denied",
+        });
+      }
+
+      if (!fs.existsSync(filePath)) {
+        return res.status(404).json({
+          message: "Certificate file not found",
+        });
+      }
+
+      return res.download(filePath, certificate.fileName);
     }
 
-    if (!fs.existsSync(filePath)) {
+    if (!certificate.cloudinaryPublicId) {
       return res.status(404).json({
         message: "Certificate file not found",
       });
     }
 
-    res.download(filePath, certificate.fileName);
+    const extension = path.extname(certificate.fileName).toLowerCase().slice(1);
+
+    const downloadUrl = cloudinary.utils.private_download_url(
+      certificate.cloudinaryPublicId,
+      extension,
+      {
+        resource_type: "raw",
+        type: "authenticated",
+        expires_at: Math.floor(Date.now() / 1000) + 300,
+      }
+    );
+
+    return res.redirect(downloadUrl);
   } catch (error) {
     console.error("Certificate download error:", error);
 

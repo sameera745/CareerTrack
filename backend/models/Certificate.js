@@ -15,10 +15,23 @@ const certificateSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+
+    // Used for older certificates stored locally
     filePath: {
       type: String,
-      required: true,
+      required: false,
     },
+
+    // Used for certificates stored in Cloudinary
+    cloudinaryPublicId: {
+      type: String,
+      required: false,
+    },
+    cloudinaryResourceType: {
+      type: String,
+      required: false,
+    },
+
     owner: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
