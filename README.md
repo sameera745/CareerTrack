@@ -131,7 +131,7 @@ node server.js
 
 The backend runs at:
 
-`http://localhost:5000`
+`https://careertrack-1-vhdt.onrender.com`
 
 ### Step 6: Start the Frontend
 

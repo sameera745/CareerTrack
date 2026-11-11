@@ -14,7 +14,7 @@ function Certificates() {
       return;
     }
 
-    fetch("http://localhost:5000/api/certificates", {
+    fetch("https://careertrack-1-vhdt.onrender.com/api/certificates", {
       headers: {
         Authorization: `Bearer ${token}`,
       },
@@ -47,7 +47,7 @@ function Certificates() {
       }
 
       const response = await fetch(
-        `http://localhost:5000/api/certificates/${certificate._id}/download`,
+        `https://careertrack-1-vhdt.onrender.com/api/certificates/${certificate._id}/download`,
         {
           headers: {
             Authorization: `Bearer ${token}`,

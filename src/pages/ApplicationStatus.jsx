@@ -16,7 +16,7 @@ function ApplicationStatus() {
         }
 
         const response = await fetch(
-          "http://localhost:5000/api/applications",
+          "https://careertrack-1-vhdt.onrender.com/api/applications",
           {
             headers: {
               Authorization: `Bearer ${token}`,
