@@ -1,5 +1,8 @@
 # CareerTrack – Application and Certificate Management System
 
+Live Website:https://career-track-sepia.vercel.app
+Backend API:https://careertrack-1-vhdt.onrender.com/   
+
 ## 1. Project Overview
 
 CareerTrack is a Full Stack Web Application developed to help students manage internship applications and certificates in one place.
